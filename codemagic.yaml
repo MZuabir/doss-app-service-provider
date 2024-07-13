@@ -1,0 +1,105 @@
+workflows:
+  android-workflow:
+    name: Android Build
+    max_build_duration: 30
+    instance_type: mac_mini_m1
+    environment:
+      android_signing:
+        - keystore_doss_vigia
+      groups:
+        - google_play
+      vars:
+        APP_NAME: Doss Vigia
+        PACKAGE_NAME: br.com.doss.vigia
+        VERSION_NAME: 1.0.0
+        GOOGLE_PLAY_TRACK: internal
+      flutter: stable
+    cache:
+      cache_paths: []
+    scripts:
+    - name: Set up keystore.properties
+      script: | 
+        echo "flutter.sdk=$HOME/programs/flutter" > "$CM_BUILD_DIR/android/local.properties"
+        echo "flutter.sdk=$HOME/programs/flutter" > "$CM_BUILD_DIR/android/key.properties"
+    - name: Get Flutter packages
+      script: | 
+        flutter packages pub get
+    - name: Build AAB with Flutter
+      script: |
+        # flutter build appbundle --debug
+        BUILD_NUMBER=$(($(google-play get-latest-build-number --package-name "$PACKAGE_NAME" --tracks="$GOOGLE_PLAY_TRACK") + 1))
+        echo $BUILD_NUMBER
+        flutter build appbundle --release \
+          --build-name=$VERSION_NAME \
+          --build-number=$BUILD_NUMBER
+    artifacts:
+      - build/**/outputs/**/*.aab
+      - build/**/outputs/**/mapping.txt
+      - flutter_drive.log
+      
+    publishing:
+      email:
+        recipients:
+          - thomas.j.santos@gmail.com
+        notify:
+          success: true
+          failure: false
+      google_play:
+        credentials: $GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
+        track: $GOOGLE_PLAY_TRACK
+        in_app_update_priority: 3
+        submit_as_draft: true
+  
+  ios-workflow:
+    name: iOS Build
+    max_build_duration: 20
+    instance_type: mac_mini_m1
+    environment:
+      vars:
+        APP_ID: 6472057435
+        APP_NAME: Doss Vigia
+        BUILD_NAME: 1.0.0
+        BUNDLE_NAME: br.com.doss.vigia
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      ios_signing:
+        distribution_type: app_store # or: ad_hoc | development | enterprise
+        bundle_identifier: $BUNDLE_NAME
+    scripts:
+    - name: Get Flutter packages
+      script: | 
+        flutter packages pub get
+    - name: Install pods
+      script: | 
+        find . -name "Podfile" -execdir pod install \;
+    - name: Set up code signing settings on Xcode project
+      script: | 
+        xcode-project use-profiles
+    - name: Flutter build ipa
+      script: | 
+        # BUILD_NUMBER=$(($(app-store-connect get-latest-app-store-build-number "$APP_ID") + 1)) # for production
+        BUILD_NUMBER=$(($(app-store-connect get-latest-testflight-build-number "$APP_ID") + 1)) # for testflight
+        echo $BUILD_NUMBER
+        flutter build ipa --release \
+          --build-name=$BUILD_NAME \
+          --build-number=$BUILD_NUMBER \
+          --export-options-plist ~/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - flutter_drive.log
+    integrations:
+      app_store_connect: doss_app_key
+    publishing:
+      email:
+        recipients:
+          - thomas.j.santos@gmail.com
+        notify:
+          success: true
+          failure: false
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        beta_groups: 
+          - Internal Tester
